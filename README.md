@@ -40,17 +40,6 @@
 
 ---
 
-## 📸 截图
-
-主界面（明色主题 · 文件树 / 搜索 / 标签 / 编辑区）：
-
-![MarkdownNote 主界面](docs/screenshot.png)
-
-任务栏应用图标：
-
-![MarkdownNote 任务栏图标](docs/screenshot-taskbar.png)
-
----
 
 ## 🛠 技术栈
 
@@ -157,7 +146,6 @@ markdownnote/
 ├── tools/                   # 构建脚本、图标生成、冒烟测试
 ├── samples/                 # 安装时随包分发的示例笔记
 ├── build/                   # 打包资源（icon.ico 等）
-├── docs/                    # 文档截图
 └── dist/                    # 构建产物（打包时生成）
 ```
 
