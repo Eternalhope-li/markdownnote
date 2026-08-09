@@ -1,0 +1,75 @@
+{
+  "name": "markdown-note",
+  "productName": "MarkdownNote",
+  "version": "0.1.0",
+  "description": "Markdown 笔记编辑器：Typora 式所见即所得打字排版、标签、全文搜索、主题、导出 PDF/HTML",
+  "main": "main.js",
+  "license": "MIT",
+  "author": "eternalhope",
+  "scripts": {
+    "start": "electron .",
+    "build:renderer": "node tools/build.js",
+    "smoke": "electron . --smoke",
+    "pack": "electron-builder --dir",
+    "dist": "node tools/build.js && electron-builder --win nsis"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.6.0",
+    "@codemirror/lang-markdown": "^6.3.0",
+    "@codemirror/language": "^6.10.0",
+    "@codemirror/state": "^6.4.0",
+    "@codemirror/theme-one-dark": "^6.1.2",
+    "@codemirror/view": "^6.34.0",
+    "codemirror": "^6.0.1",
+    "highlight.js": "^11.10.0",
+    "markdown-it": "^14.1.0",
+    "turndown": "^7.2.4"
+  },
+  "devDependencies": {
+    "electron": "33.4.11",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.markdownnote.app",
+    "electronDist": "node_modules/electron/dist",
+    "productName": "MarkdownNote",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "dist/**",
+      "src/**",
+      "tools/**"
+    ],
+    "extraResources": [
+      {
+        "from": "samples",
+        "to": "notes"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "MarkdownNote",
+      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "uninstallDisplayName": "${productName} ${version}"
+    }
+  }
+}

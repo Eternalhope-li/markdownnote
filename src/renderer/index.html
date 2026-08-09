@@ -1,0 +1,53 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; font-src 'self' data:">
+<title>MarkdownNote</title>
+<link rel="icon" href="icon.png">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="css/github.css" id="hljsLight">
+<link rel="stylesheet" href="css/github-dark.css" id="hljsDark" disabled>
+</head>
+<body data-theme="light">
+<div id="app">
+  <aside id="sidebar">
+    <div class="sidebar-header">
+      <span class="app-logo" aria-hidden="true"><span class="logo-mark" title="MarkdownNote"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-width="2.6"><path d="M9.1 4.5v15M14.9 4.5v15" stroke="#ffffff"/><path d="M4.5 9.2h15" stroke="#ffffff"/><path d="M4.5 14.8h15" stroke="#22d3ee"/></svg></span><span class="logo-name">MarkdownNote</span></span>
+      <button id="btnPickFolder" class="icon-btn" title="选择笔记库文件夹">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+      </button>
+    </div>
+    <div class="search-wrap">
+      <svg class="search-ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></svg>
+      <input id="searchInput" type="search" placeholder="搜索标题 / 标签 / 正文…">
+    </div>
+    <div id="searchResults" class="search-results"></div>
+    <div id="tagBar" class="tag-bar"></div>
+    <div id="fileList" class="file-list"></div>
+  </aside>
+  <main id="main">
+    <div class="pane-head">
+      <span id="fileName" class="file-name">未命名.md</span>
+      <span class="pane-actions">
+        <button id="btnNew" class="mini-btn" title="新建笔记 (Ctrl+N)">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg><span>新建</span>
+        </button>
+        <button id="btnExportHtml" class="mini-btn" title="导出 HTML">HTML</button>
+        <button id="btnExportPdf" class="mini-btn" title="导出 PDF">PDF</button>
+        <button id="btnCodeLines" class="mini-btn" title="开启代码行号">行号</button>
+        <button id="btnTheme" class="icon-btn" title="切换主题 (Ctrl+Shift+T)"></button>
+      </span>
+    </div>
+    <section id="typoraPane" class="typora-pane markdown-body" contenteditable="true" spellcheck="false"></section>
+  </main>
+</div>
+<footer id="statusBar">
+  <span id="statSave" class="save-state">已保存</span>
+  <span id="statWords"></span>
+  <span id="statSearch"></span>
+  <span id="statLib" class="stat-lib"></span>
+</footer>
+<script src="renderer.js"></script>
+</body>
+</html>

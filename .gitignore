@@ -1,0 +1,21 @@
+﻿# 依赖
+node_modules/
+
+# 构建产物
+dist/
+release/
+App/
+
+# 运行时用户数据
+notes/
+*.bak
+
+# 临时调试脚本
+_bkp.ps1
+_chk.ps1
+
+# 调试截图（打包所需的 build/icon.ico、build/icon.png 保留）
+build/exe-extracted-icon-check.png
+build/installed-exe-icon-check.png
+build/screenshot-*.png
+build/taskbar-crop.png
