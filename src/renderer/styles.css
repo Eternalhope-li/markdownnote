@@ -1,4 +1,4 @@
-* { box-sizing: border-box; }
+﻿* { box-sizing: border-box; }
 
 :root {
   --bg: #f3f4f7;
@@ -185,7 +185,7 @@ body {
 .save-state.dirty::before { background: var(--danger); }
 .stat-lib { margin-left: auto; max-width: 45%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* ---------- 编辑区（Typora 所见即所得） ---------- */
+/* ---------- 编辑区（WYSIWYG 所见即所得） ---------- */
 .markdown-body { font-size: 15px; line-height: 1.75; word-break: break-word; }
 .markdown-body h1, .markdown-body h2 { border-bottom: 1px solid var(--border); padding-bottom: .3em; font-weight: 700; letter-spacing: .2px; }
 .markdown-body h1 { font-size: 1.9em; margin: .45em 0 .3em; }
@@ -209,7 +209,7 @@ body {
   background: transparent; padding: 0; border: none; white-space: pre;
   font-size: inherit; line-height: inherit;
 }
-/* 代码行号（Typora 式）：gutter 数字列 + 紧凑连续代码行 */
+/* 代码行号（WYSIWYG 式）：gutter 数字列 + 紧凑连续代码行 */
 .markdown-body pre.code-block { display: flex; align-items: stretch; padding: 0; }
 .markdown-body pre.code-block code { flex: 1 1 auto; padding: 12px 16px; min-width: 0; }
 .code-gutter {
@@ -222,7 +222,7 @@ body {
   user-select: none; cursor: default;
 }
 .code-gutter::selection { background: transparent; }
-/* 代码块悬停工具条（Typora 式）：语言标签 + 行号开关 */
+/* 代码块悬停工具条（WYSIWYG 式）：语言标签 + 行号开关 */
 .code-toolbar {
   position: absolute; top: 8px; right: 10px; z-index: 3;
   display: flex; align-items: center; gap: 5px;
@@ -253,7 +253,15 @@ body {
 .markdown-body th { background: var(--panel); font-weight: 650; }
 .markdown-body th:last-child, .markdown-body td:last-child { border-right: none; }
 .markdown-body tr:last-child td { border-bottom: none; }
-.markdown-body img { max-width: 100%; border-radius: 8px; }
+.markdown-body img { max-width: 100%; border-radius: 8px; cursor: default; -webkit-user-drag: none; }
+.markdown-body img.img-selected { outline: 2px solid var(--accent); outline-offset: 1px; cursor: default; user-select: none; }
+.img-resize-handle { position: absolute; width: 11px; height: 11px; background: #fff; border: 2px solid var(--accent); border-radius: 50%; transform: translate(-50%, -50%); display: none; z-index: 10; box-shadow: 0 1px 4px rgba(0,0,0,.4); transition: transform .12s ease, box-shadow .12s ease; }
+.img-resize-handle:hover { transform: translate(-50%, -50%) scale(1.3); box-shadow: 0 2px 8px rgba(0,0,0,.45); }
+.img-resize-handle.d-nw, .img-resize-handle.d-se { cursor: nwse-resize; }
+.img-resize-handle.d-ne, .img-resize-handle.d-sw { cursor: nesw-resize; }
+.img-resize-handle.d-n, .img-resize-handle.d-s { cursor: ns-resize; }
+.img-resize-handle.d-e, .img-resize-handle.d-w { cursor: ew-resize; }
+.img-size-tip { position: absolute; background: rgba(0,0,0,.78); color: #fff; font-size: 12px; line-height: 1; padding: 4px 8px; border-radius: 5px; pointer-events: none; z-index: 20; white-space: nowrap; }
 .markdown-body p { margin: .6em 0; }
 .markdown-body hr { border: none; border-top: 1px solid var(--border); margin: 1em 0; }
 .markdown-body ul, .markdown-body ol { padding-left: 1.6em; }
@@ -269,9 +277,9 @@ body {
   accent-color: var(--accent);
 }
 
-/* ---------- Typora 编辑面板 ---------- */
-.typora-pane {
-  flex: 1; overflow-y: auto;
+/* ---------- WYSIWYG 编辑面板 ---------- */
+.editor-pane {
+  flex: 1; overflow-y: auto; position: relative;
   padding: 30px 48px 48px;
   outline: none; min-height: 0;
   margin: 16px 20px 20px;
@@ -282,36 +290,36 @@ body {
   caret-color: var(--accent);
   transition: background-color .2s, border-color .2s;
 }
-.typora-pane:focus-within { box-shadow: var(--shadow-1), 0 0 0 3px var(--accent-soft); }
-.typora-pane:empty::before {
+.editor-pane:focus-within { box-shadow: var(--shadow-1), 0 0 0 3px var(--accent-soft); }
+.editor-pane:empty::before {
   content: '开始写作：输入 # 标题、- 列表、> 引用、``` 代码、**加粗**，所见即所得实时排版';
   color: var(--muted); opacity: .65; pointer-events: none;
   display: block; text-align: center; margin-top: 12vh;
   font-size: 14px;
 }
 
-/* ---------- 块级元素“编辑预览”（Typora 两段式） ----------
+/* ---------- 块级元素“编辑预览”（WYSIWYG 两段式） ----------
    编辑态：行首标记虚化淡显，文字仅加粗预览；光标离开本块后才正式渲染为标题/列表/引用 */
-.typora-pane .md-pending .md-marker {
+.editor-pane .md-pending .md-marker {
   color: var(--muted);
   opacity: .5;
   font-weight: normal;
 }
-.typora-pane .md-pending[data-md-pending^="h"] {
+.editor-pane .md-pending[data-md-pending^="h"] {
   font-weight: bold;
 }
-.typora-pane .md-pending[data-md-pending="ul"],
-.typora-pane .md-pending[data-md-pending="ol"],
-.typora-pane .md-pending[data-md-pending="task"] {
+.editor-pane .md-pending[data-md-pending="ul"],
+.editor-pane .md-pending[data-md-pending="ol"],
+.editor-pane .md-pending[data-md-pending="task"] {
   margin-left: 1.5em;
 }
-.typora-pane .md-pending[data-md-pending="quote"] {
+.editor-pane .md-pending[data-md-pending="quote"] {
   margin-left: .5em;
   padding-left: 12px;
   border-left: 3px solid var(--border);
 }
 
-/* 代码语言选择器（Typora 式右下角标签） */
+/* 代码语言选择器（WYSIWYG 式右下角标签） */
 .code-lang-picker {
   position: absolute; right: 10px; bottom: 8px; z-index: 3;
   font-size: 11px; color: var(--muted); background: var(--bg-elev);
@@ -351,3 +359,130 @@ body {
 .code-lang-item:hover { background: var(--panel); color: var(--accent); }
 
 .code-lang-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+/* ---------- 链接对话框（Ctrl+K） ---------- */
+.modal-mask {
+  position: fixed; inset: 0; z-index: 999;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex; align-items: center; justify-content: center;
+}
+.modal-mask[hidden] { display: none; }
+.modal-box {
+  width: 380px; padding: 16px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+}
+.modal-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+.modal-box input {
+  width: 100%; padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--fg);
+  font-size: 13px; outline: none;
+}
+.modal-box input:focus { border-color: var(--accent); }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.modal-actions .mini-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+/* ---------- 保存成功提示条 ---------- */
+.toast {
+  position: fixed; left: 50%; bottom: 46px; z-index: 1000;
+  transform: translateX(-50%);
+  background: var(--bg-elev);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  box-shadow: var(--shadow-2);
+  opacity: 0; pointer-events: none;
+  transition: opacity .2s, transform .2s;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
+
+/* ---------- 多标签页 ---------- */
+.tab-bar {
+  display: flex; align-items: stretch; gap: 4px; padding: 6px 20px 0; overflow-x: auto; flex: 0 0 auto;
+}
+.tab-bar::-webkit-scrollbar { height: 6px; }
+.tab-bar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.tab-item {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 200px; padding: 4px 8px 4px 12px;
+  background: var(--bg-elev); border: 1px solid var(--border); border-bottom: none;
+  border-radius: 8px 8px 0 0; font-size: 12px; color: var(--muted); cursor: pointer;
+  user-select: none; white-space: nowrap;
+}
+.tab-item:hover { color: var(--text); }
+.tab-item.active { background: var(--panel); color: var(--text); font-weight: 600; border-color: var(--accent); }
+.tab-label { overflow: hidden; text-overflow: ellipsis; }
+.tab-dirty { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: 0 0 auto; }
+.tab-close {
+  width: 16px; height: 16px; line-height: 14px; text-align: center; border-radius: 50%;
+  color: var(--muted); font-size: 13px; flex: 0 0 auto;
+}
+.tab-close:hover { background: var(--danger); color: #fff; }
+
+/* ---------- 侧边面板（最近 / 大纲） ---------- */
+.side-panel { border-bottom: 1px solid var(--border); padding: 6px 10px; max-height: 180px; overflow-y: auto; }
+.side-panel-title { font-size: 11px; color: var(--muted); margin-bottom: 4px; user-select: none; }
+.recent-item {
+  display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text);
+  padding: 3px 6px; border-radius: 5px; cursor: pointer;
+}
+.recent-item:hover { background: var(--panel); }
+.recent-item .recent-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-item .recent-del { color: var(--muted); width: 14px; height: 14px; text-align: center; border-radius: 50%; }
+.recent-item .recent-del:hover { background: var(--danger); color: #fff; }
+.recent-clear { font-size: 11px; color: var(--accent); cursor: pointer; float: right; }
+.outline-item {
+  font-size: 12px; padding: 2px 6px; border-radius: 4px; cursor: pointer; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.outline-item:hover { background: var(--panel); color: var(--accent); }
+.outline-item.l1 { font-weight: 700; }
+.outline-item.l2 { padding-left: 16px; font-weight: 600; }
+.outline-item.l3 { padding-left: 26px; }
+.outline-item.l4, .outline-item.l5, .outline-item.l6 { padding-left: 36px; }
+
+/* ---------- 文件列表右键（重命名输入） ---------- */
+.file-rename-input {
+  width: 100%; box-sizing: border-box; font-size: 12px; padding: 2px 6px;
+  border: 1px solid var(--accent); border-radius: 4px; background: var(--bg); color: var(--text);
+  outline: none;
+}
+
+/* ---------- 源码视图 ---------- */
+.source-pane {
+  flex: 1; min-height: 0; margin: 16px 20px 20px; padding: 30px 48px 48px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--bg-elev);
+  color: var(--text); font-family: Consolas, "Cascadia Mono", monospace; font-size: 14px;
+  line-height: 1.7; resize: none; outline: none; box-shadow: var(--shadow-1);
+  white-space: pre; tab-size: 4;
+}
+.source-pane:focus { box-shadow: var(--shadow-1), 0 0 0 3px var(--accent-soft); }
+
+/* ---------- 拖拽插入 ---------- */
+.editor-pane.dragover { outline: 2px dashed var(--accent); outline-offset: -6px; background: var(--accent-soft); }
+
+/* ---------- 表格右键菜单 ---------- */
+.table-menu {
+  position: fixed; z-index: 200; min-width: 130px; padding: 4px;
+  background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: var(--shadow-2, 0 8px 24px rgba(0,0,0,.18));
+}
+.table-menu .tm-item { padding: 5px 10px; font-size: 12px; border-radius: 5px; cursor: pointer; color: var(--text); }
+.table-menu .tm-item:hover { background: var(--accent-soft); color: var(--accent); }
+.table-menu .tm-sep { height: 1px; margin: 4px 6px; background: var(--border); }
+
+/* ---------- 设置弹窗 ---------- */
+.setting-row { display: flex; align-items: center; gap: 10px; margin: 10px 0; font-size: 13px; }
+.setting-row label { width: 72px; color: var(--muted); flex: 0 0 auto; }
+.setting-row select, .setting-row input {
+  padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-elev); color: var(--text);
+}
+.setting-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
+
+/* ---------- 状态栏光标位置 ---------- */
+#statCursor { color: var(--muted); font-size: 12px; margin-left: 12px; }

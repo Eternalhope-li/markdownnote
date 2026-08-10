@@ -19,3 +19,10 @@ build/exe-extracted-icon-check.png
 build/installed-exe-icon-check.png
 build/screenshot-*.png
 build/taskbar-crop.png
+
+# 调试截图与本地备份（不入库）
+/dbg-*.png
+/debug-shot-*.png
+/h-*.png
+/h2-*.png
+/_backup_*/

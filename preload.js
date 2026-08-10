@@ -1,10 +1,11 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   getAppInfo: () => ipcRenderer.invoke('app:info'),
   openFileDialog: () => ipcRenderer.invoke('dialog:openFile'),
-  saveFileDialog: (defaultName) => ipcRenderer.invoke('dialog:saveFile', { defaultName }),
+  saveFileDialog: (defaultName, defaultDir) => ipcRenderer.invoke('dialog:saveFile', { defaultName, defaultDir }),
   pickFolder: () => ipcRenderer.invoke('dialog:pickFolder'),
+  confirmDialog: (o) => ipcRenderer.invoke('dialog:confirm', o),
   readFile: (p) => ipcRenderer.invoke('fs:readFile', p),
   readFileHead: (p, maxBytes) => ipcRenderer.invoke('fs:readFileHead', p, maxBytes),
   stat: (p) => ipcRenderer.invoke('fs:stat', p),
@@ -13,12 +14,28 @@ contextBridge.exposeInMainWorld('api', {
   saveImage: (dataUrl, notePath) => ipcRenderer.invoke('fs:saveImage', { dataUrl, notePath }),
   ensureDir: (d) => ipcRenderer.invoke('fs:ensureDir', d),
   listDir: (d) => ipcRenderer.invoke('fs:listDir', d),
+  renameFile: (o, n) => ipcRenderer.invoke('fs:rename', o, n),
+  deleteFile: (p) => ipcRenderer.invoke('fs:delete', p),
+  restoreBak: (p) => ipcRenderer.invoke('fs:restoreBak', p),
   readConfig: () => ipcRenderer.invoke('fs:readConfig'),
   saveConfig: (c) => ipcRenderer.invoke('fs:saveConfig', c),
   openInExplorer: (t) => ipcRenderer.invoke('fs:openInExplorer', t),
+  fileContextMenu: (payload) => ipcRenderer.invoke('file:contextMenu', payload),
+  watchFile: (p) => ipcRenderer.invoke('fs:watchFile', p),
+  unwatchFile: (p) => ipcRenderer.invoke('fs:unwatchFile', p),
+  watchDir: (d) => ipcRenderer.invoke('fs:watchDir', d),
+  unwatchDir: () => ipcRenderer.invoke('fs:unwatchDir'),
   exportPdf: (o) => ipcRenderer.invoke('export:pdf', o),
+  exportPng: (o) => ipcRenderer.invoke('export:png', o),
+  printDoc: (o) => ipcRenderer.invoke('print:doc', o),
   about: () => ipcRenderer.invoke('app:about'),
+  readClipboard: () => ipcRenderer.invoke('clipboard:read'),
+  writeClipboard: (text, html) => ipcRenderer.invoke('clipboard:write', { text, html }),
+  getPathForFile: (f) => webUtils.getPathForFile(f),
   onMenu: (cb) => ipcRenderer.on('menu', (_e, action) => cb(action)),
   onBeforeQuit: (cb) => ipcRenderer.on('app:before-quit', () => cb()),
-  beforeQuitDone: () => ipcRenderer.send('app:before-quit-done')
+  beforeQuitDone: () => ipcRenderer.send('app:before-quit-done'),
+  onFileExternalChange: (cb) => ipcRenderer.on('file:external-change', (_e, p) => cb(p)),
+  onDirChanged: (cb) => ipcRenderer.on('fs:dir-changed', (_e, p) => cb(p)),
+  onFileContextAction: (cb) => ipcRenderer.on('file:context-action', (_e, p) => cb(p))
 });

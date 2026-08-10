@@ -7,7 +7,7 @@ module.exports = String.raw`(async () => {
     if (document.querySelectorAll('.file-item').length > 0) break;
     await sleep(200);
   }
-  const pane = document.getElementById('typoraPane');
+  const pane = document.getElementById('editorPane');
   const out = {};
   const weird = (s) => { const r = []; for (const ch of s || '') { const c = ch.codePointAt(0); if ((c < 32 && c !== 9 && c !== 10 && c !== 13) || c === 0xfffd || c === 0xfeff) r.push('U+' + c.toString(16).toUpperCase().padStart(4,'0')); } return r; };
   const lib = (await window.api.readConfig()).library || (await window.api.getAppInfo()).defaultLibrary;

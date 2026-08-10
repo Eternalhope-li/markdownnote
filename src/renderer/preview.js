@@ -34,7 +34,7 @@ const md = new MarkdownIt({
   linkify: true,
   typographer: true,
   highlight(code, lang) {
-    // 去掉围栏内容末尾的换行：否则重载后代码块尾部多一个幽灵空行（Typora 无此现象）
+    // 去掉围栏内容末尾的换行：否则重载后代码块尾部多一个幽灵空行（WYSIWYG 无此现象）
     const c = String(code).replace(/\n$/, '');
     if (lang && hljs.getLanguage(lang)) {
       try {

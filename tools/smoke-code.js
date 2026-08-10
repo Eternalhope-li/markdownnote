@@ -1,17 +1,17 @@
 ﻿// 运行于渲染进程的冒烟测试（--smoke 模式）。String.raw 模板字符串保证 \u200b 等转义原样传给执行环境。
 module.exports = String.raw`(async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const step = (n) => console.log("[smoke] step " + n);
   const t0 = Date.now();
   while (Date.now() - t0 < 10000) {
     if (document.querySelectorAll('.file-item').length > 0) break;
     await sleep(200);
   }
-  const pane = document.getElementById('typoraPane');
+  const pane = document.getElementById('editorPane');
   const out = { hasPane: !!pane, hasApi: !!window.api, notes: document.querySelectorAll('.file-item').length };
   if (!pane) return out;
-  const fileName = document.getElementById('fileName').textContent;
   const lib = (await window.api.readConfig()).library || (await window.api.getAppInfo()).defaultLibrary;
-  const notePath = lib + '/' + fileName;
+  const notePath = (window.__test && window.__test.currentPath && window.__test.currentPath()) || (lib + '/' + document.getElementById('fileName').textContent);
   let origContent = null;
   try { origContent = await window.api.readFile(notePath); } catch (e) {}
   const reset = async () => {
@@ -91,7 +91,7 @@ module.exports = String.raw`(async () => {
   const pending = (t) => !!pane.querySelector('[data-md-pending="' + t + '"]');
 
   try {
-    // 1) 块级两段式（Typora）：输入 "#" 不转换；空格后进入编辑预览（井号虚化、文字仅加粗）；
+    // 1) 块级两段式（WYSIWYG）：输入 "#" 不转换；空格后进入编辑预览（井号虚化、文字仅加粗）；
     //    光标仍在行内不渲染，移出本行才正式渲染为标题/列表/引用
     fresh(); await type('#'); out.h1Pending = !pane.querySelector('h1');
     await type(' ');
@@ -367,6 +367,86 @@ out.hashInLi = !!pane.querySelector('h1') && hText() === '\u5217\u8868\u5185\u5b
     out.dirtyLoadCtrl = ctrlOf(pane.textContent);
     out.dirtyLoadNoFFFD = (pane.textContent || '').indexOf('\ufffd') === -1;
     out.dirtyLoadHeading = !!pane.querySelector('h1');
+    // 12) Ctrl+Shift+C：复制为 Markdown（真实剪贴板路径）
+    try { if (navigator.clipboard) await navigator.clipboard.writeText('__sentinel__'); } catch (e) {}
+    fresh();
+    await type('**bold** and \`code\`', 80);
+    const sel12 = window.getSelection();
+    const r12 = document.createRange();
+    r12.selectNodeContents(pane);
+    sel12.removeAllRanges();
+    sel12.addRange(r12);
+    pane.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+    await sleep(180);
+    try {
+      out.copyAsMd = navigator.clipboard ? await navigator.clipboard.readText() : '(unavailable)';
+    } catch (e) { out.copyAsMd = '(read failed)'; }
+    // 13) Ctrl+Shift+V：粘贴为 Markdown（富文本来源先转回 Markdown 再渲染）
+    fresh();
+    await window.api.writeClipboard('', '<p>Hello <strong>bold</strong> world</p>');
+    pane.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+    await sleep(300);
+    out.pasteAsMdStrong = !!pane.querySelector('strong');
+    out.pasteAsMdText = pane.textContent;
+    // 14) 真实粘贴场景：Word/网页样式 span、下划线、真实 Ctrl+V → 保存后是对应的 Markdown
+    fresh();
+    await window.api.writeClipboard('Hello bold world', '<p>Hello <span style="font-weight:bold">bold</span> world</p>');
+    pane.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+    await sleep(300);
+    await save();
+    out.pasteWordMd = (await read()).includes('**bold**');
+    fresh();
+    await window.api.writeClipboard('under', '<p>Hello <u>under</u> line</p>');
+    pane.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+    await sleep(300);
+    await save();
+    out.pasteUnderlineMd = (await read()).includes('<u>under</u>');
+    fresh();
+    const dt = new DataTransfer();
+    dt.setData('text/html', '<p>Web <strong>strong</strong> text</p>');
+    dt.setData('text/plain', 'Web strong text');
+    pane.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    await sleep(300);
+    out.pasteCtrVStrong = !!pane.querySelector('strong');
+    await save();
+    out.pasteCtrVMd = (await read()).includes('**strong**');
+    // 15) 图片缩放：点击选中 → 右下角手柄拖拽 → 保存为 <img width>，重开保留
+    fresh();
+    const imgTest = document.createElement('img');
+    imgTest.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    imgTest.alt = 'pic';
+    imgTest.style.width = '100px';
+    const pBlock = document.createElement('p');
+    pBlock.appendChild(imgTest);
+    pane.appendChild(pBlock);
+    // 点击图片 → 仅选中（不缩放）
+    imgTest.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }));
+    await sleep(120);
+    out.imgSelectedClass = imgTest.classList.contains('img-selected');
+    const handles = Array.from(document.querySelectorAll('.img-resize-handle'));
+    out.imgHandleCount = handles.length;
+    out.imgHandleDirs = handles.map((h) => h.dataset.dir).sort().join(',');
+    out.imgHandleShownAll = handles.length === 8 && handles.every((h) => h.style.display === 'block');
+    const seHandle = handles.find((h) => h.dataset.dir === 'se');
+    const r = imgTest.getBoundingClientRect();
+    // 拖动 se 手柄 → 缩放（保持宽高比）
+    if (seHandle) {
+      seHandle.dispatchEvent(new MouseEvent('mousedown', { clientX: r.right, clientY: r.bottom, bubbles: true, cancelable: true, button: 0 }));
+      document.dispatchEvent(new MouseEvent('mousemove', { clientX: r.right + 100, clientY: r.bottom + 100, bubbles: true, cancelable: true }));
+      document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+    }
+    await sleep(250);
+    await save();
+    const mdImg = await read();
+    out.mdImgFull = mdImg;
+    out.imgSizeMd = mdImg.includes('<img') && mdImg.includes('width="');
+    const mw = /width="(\d+)"/.exec(mdImg);
+    out.imgWidthValue = mw ? mw[1] : '(none)';
+    // 重开笔记：Markdown 里的 <img width> 应原样渲染回编辑区
+    if (window.__test && window.__test.openNote) await window.__test.openNote(notePath);
+    await sleep(300);
+    out.imgReloadWidth = !!pane.querySelector('img[width]');
+    out.imgReloadPane = pane.innerHTML.slice(0, 400);
   } finally {
     await reset();
   }

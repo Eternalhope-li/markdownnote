@@ -2,7 +2,7 @@
   "name": "markdown-note",
   "productName": "MarkdownNote",
   "version": "0.1.0",
-  "description": "Markdown 笔记编辑器：Typora 式所见即所得打字排版、标签、全文搜索、主题、导出 PDF/HTML",
+  "description": "Markdown 笔记编辑器：所见即所得打字排版、标签、全文搜索、主题、导出 PDF/HTML",
   "main": "main.js",
   "license": "MIT",
   "author": "eternalhope",

@@ -1,4 +1,4 @@
-// typora.js —— MarkdownNote 所见即所得编辑器内核（原创实现）
+﻿// editor.js —— MarkdownNote 所见即所得编辑器内核（原创实现）
 //
 // 架构：编辑面板 DOM 即唯一真相（Single Source of Truth）
 //   · 打开文件：markdown-it 一次性渲染到面板（低频）
@@ -31,9 +31,13 @@ let onGetNotePathCb = null;
 let composing = false;
 let dirty = false;
 let serializeTimer = null;
+let onOutlineCb = null;
+let dragDepth = 0;
+let outlineTimer = null;
+let caretStatusTimer = null;
 
 const $ = (id) => document.getElementById(id);
-function getPane() { return $('typoraPane'); }
+function getPane() { return $('editorPane'); }
 
 // ---------- HTML -> Markdown（仅在保存时整篇执行） ----------
 const td = new TurndownService({
@@ -68,6 +72,47 @@ td.addRule('strikethrough', {
   replacement: (content) => '~~' + content + '~~'
 });
 
+// 下划线 <u> -> 内联 HTML（Markdown 无原生下划线，Typora 同样用 <u>）
+td.addRule('underline', {
+  filter: ['u'],
+  replacement: (content) => '<u>' + content + '</u>'
+});
+
+// Word / 网页复制最常见的行内 CSS 样式 <span style=...> -> Markdown 标记
+td.addRule('inlineCss', {
+  filter: (node) => node.nodeName === 'SPAN' && !!node.getAttribute('style'),
+  replacement: (content, node) => {
+    const style = (node.getAttribute('style') || '').toLowerCase();
+    const bold = /\bfont-weight\s*:\s*(bold|bolder|600|700|800|900)\b/.test(style);
+    const italic = /\bfont-style\s*:\s*(italic|oblique)\b/.test(style);
+    const underline = /\btext-decoration\s*:\s*[^;]*underline/.test(style);
+    const lineThrough = /\btext-decoration\s*:\s*[^;]*line-through/.test(style);
+    let out = content;
+    if (bold) out = '**' + out + '**';
+    if (italic) out = '*' + out + '*';
+    if (underline) out = '<u>' + out + '</u>';
+    if (lineThrough) out = '~~' + out + '~~';
+    return out;
+  }
+});
+
+
+// 图片：带尺寸的保留为 HTML <img width>（Markdown 原生语法表达不了尺寸）；无尺寸保持 ![alt](src)
+td.addRule('image', {
+  filter: 'img',
+  replacement: (content, node) => {
+    const src = (node.getAttribute('src') || '').replace(/"/g, '&quot;');
+    const alt = (node.getAttribute('alt') || '图片').replace(/"/g, '&quot;');
+    const w = node.getAttribute('width');
+    const h = node.getAttribute('height');
+    if (w || h) {
+      const wAttr = w ? ' width="' + w + '"' : '';
+      const hAttr = h ? ' height="' + h + '"' : '';
+      return '<img src="' + src + '" alt="' + alt + '"' + wAttr + hAttr + '>';
+    }
+    return '![' + alt + '](' + src + ')';
+  }
+});
 // 任务列表 checkbox -> [x] / [ ]
 td.addRule('taskCheckbox', {
   filter: (node) => node.nodeName === 'INPUT' && node.type === 'checkbox',
@@ -196,7 +241,7 @@ function placeCaretAtOffset(el, offset) {
   sel.addRange(range);
 }
 
-// ---------- 自动配对括号（Typora 式）：() [] {} "" '' `` ----------
+// ---------- 自动配对括号（WYSIWYG 式）：() [] {} "" '' `` ----------
 const PAIR_OPEN = { '(': ')', '[': ']', '{': '}' };   // 开括号 -> 闭括号
 const PAIR_SAME = { '"': '"', "'": "'", '`': '`' };   // 同字符配对
 const PAIR_CLOSE = { ')': '(', ']': '[', '}': '{' };  // 闭括号 -> 开括号
@@ -360,6 +405,7 @@ function serialize() {
   const pane = getPane();
   // 在克隆副本上标记空段落，绝不污染正在编辑的真实 DOM
   const clone = pane.cloneNode(true);
+  clone.querySelectorAll('.img-resize-handle, .img-size-tip').forEach((n) => n.remove());
   markEmptyBlocks(clone);
   const fm = getFrontmatterRaw(doc.getDoc());
   let body = td.turndown(clone.innerHTML).trim();
@@ -449,7 +495,7 @@ const EMPTY_MARKER_RE = [
   }
 ];
 
-// ---------- 行首标记“悬停”状态（Typora 式）：输入 "# " 后井号虚化、整行按目标样式预览，
+// ---------- 行首标记“悬停”状态（WYSIWYG 式）：输入 "# " 后井号虚化、整行按目标样式预览，
 //            光标移走 / 回车 / 点击时才真正转成标题、列表、引用等 ----------
 function matchPendingMarker(textBefore) {
   let m = /^([-+*])\s+\[([ xX])\]\s/.exec(textBefore);
@@ -598,7 +644,7 @@ function tryEmptyMarker() {
     }
   }
 
-  // 段落 / 裸文本：进入“悬停”状态（Typora：井号虚化、样式预览，光标移走 / 回车才提交）
+  // 段落 / 裸文本：进入“悬停”状态（WYSIWYG：井号虚化、样式预览，光标移走 / 回车才提交）
   const blockTag = block.nodeType === Node.ELEMENT_NODE ? block.tagName.toLowerCase() : '';
   if (block.nodeType === Node.TEXT_NODE || blockTag === 'p' || blockTag === 'div') {
     return handlePendingInput(target, block, textBefore);
@@ -615,7 +661,7 @@ function tryEmptyMarker() {
     const isTargetLi = target.nodeType === Node.ELEMENT_NODE && target.tagName === 'LI';
 
     if (isTargetLi && isList) {
-      // 列表项内 "- " / "1. "：生成嵌套列表（Typora 式）
+      // 列表项内 "- " / "1. "：生成嵌套列表（WYSIWYG 式）
       target.textContent = ZWSP;
       target.appendChild(el);
       placeCaretAtEnd(el);
@@ -673,7 +719,7 @@ function tryEmptyMarker() {
   return false;
 }
 
-// ---------- 回车完成标记（Typora 式）：输入 "#" / "-" / "1." / ">" / "- [ ]" 后回车即排版；
+// ---------- 回车完成标记（WYSIWYG 式）：输入 "#" / "-" / "1." / ">" / "- [ ]" 后回车即排版；
 //            已带内容的行（如 "# 标题"）回车时整行转换 ----------
 const ENTER_MARKER_RE = [
   { re: /^(#{1,6}) ?$/, make: EMPTY_MARKER_RE[0].make },
@@ -689,7 +735,7 @@ const ENTER_MARKER_RE = [
 ];
 
 
-// ??????????????????????????????????Typora ??
+// ??????????????????????????????????WYSIWYG ??
 function keepListSeparated(el) {
   if (!el || (el.tagName !== 'UL' && el.tagName !== 'OL')) return;
   const listLike = (n) => n && (n.tagName === 'UL' || n.tagName === 'OL');
@@ -741,7 +787,7 @@ function tryEnterMarker() {
     else pane.appendChild(el);
     keepListSeparated(el);
     if (rule.keep) {
-      // 转换的同时换行（Typora 式）：标题下方补空段落，列表补空项，引用补空行
+      // 转换的同时换行（WYSIWYG 式）：标题下方补空段落，列表补空项，引用补空行
       const tag = el.tagName.toLowerCase();
       if (tag === 'blockquote') {
         const p = document.createElement('p');
@@ -960,7 +1006,7 @@ function caretInPre() {
   return n ? !!closestTag(n, 'pre') : false;
 }
 
-// ---------- 代码行号（Typora 式）：整篇开关，gutter 为不可编辑的数字列 ----------
+// ---------- 代码行号（WYSIWYG 式）：整篇开关，gutter 为不可编辑的数字列 ----------
 let codeLinesEnabled = false;
 
 function setCodeLines(enabled) {
@@ -997,7 +1043,7 @@ function codeLangOf(pre) {
   return m ? m[1] : '';
 }
 
-// Typora 式：代码块悬停时右上角显示工具条（语言标签 + 行号开关）
+// WYSIWYG 式：代码块悬停时右上角显示工具条（语言标签 + 行号开关）
 function ensureCodeToolbar(pre) {
   if (pre.querySelector(':scope > .code-toolbar')) return;
   const bar = document.createElement('span');
@@ -1027,7 +1073,7 @@ function refreshToolbar(pre) {
   if (btn) btn.classList.toggle('active', !!pre.querySelector(':scope > .code-gutter'));
 }
 
-// ---------- 代码语言：右下角选择器 + 编辑实时高亮（Typora 式） ----------
+// ---------- 代码语言：右下角选择器 + 编辑实时高亮（WYSIWYG 式） ----------
 const CODE_LANGS = [
   ['js', 'JavaScript'], ['ts', 'TypeScript'], ['py', 'Python'], ['java', 'Java'],
   ['c', 'C'], ['cpp', 'C++'], ['cs', 'C#'], ['go', 'Go'], ['rs', 'Rust'],
@@ -1296,8 +1342,8 @@ function placeCaretAtStart(el) {
   sel.addRange(range);
 }
 
-// Typora 式：代码块第一行按 ↑ / 最后一行按 ↓ 退出代码块
-// ↓/↑：多行文本块（段落/标题/列表/引用等）内按行移动，不跳块（Typora 式）
+// WYSIWYG 式：代码块第一行按 ↑ / 最后一行按 ↓ 退出代码块
+// ↓/↑：多行文本块（段落/标题/列表/引用等）内按行移动，不跳块（WYSIWYG 式）
 function moveVerticalInText(isDown) {
   const sel = window.getSelection();
   if (!sel || sel.rangeCount === 0) return false;
@@ -1347,7 +1393,7 @@ function moveVerticalInText(isDown) {
   }
   return false;
 }
-// 文档末尾空段落：点击尾部空白 / ↓ 时把光标送到可编辑的尾部位置（Typora 尾部可编辑规则）
+// 文档末尾空段落：点击尾部空白 / ↓ 时把光标送到可编辑的尾部位置（WYSIWYG 尾部可编辑规则）
 function ensureEndParagraph() {
   const pane = getPane();
   const last = pane.lastElementChild;
@@ -1433,7 +1479,7 @@ function exitCodeBlockOnArrow(isDown) {
   if (isDown) {
     const next = pre.nextElementSibling;
     if (next) { placeCaretAtStart(next); return true; }
-    // 文档末尾 ↓：光标移到尾部新建的空段落（Typora 尾部可编辑）
+    // 文档末尾 ↓：光标移到尾部新建的空段落（WYSIWYG 尾部可编辑）
     const p = moveCaretToNewEndParagraph(false);
     placeCaretAtEnd(p);
   } else {
@@ -1446,7 +1492,7 @@ function exitCodeBlockOnArrow(isDown) {
   return true;
 }
 
-// ---------- 快照式撤销 / 重做（Typora 式）：转换类操作（# / ** / 退格降级等）可 Ctrl+Z 还原成原文 ----------
+// ---------- 快照式撤销 / 重做（WYSIWYG 式）：转换类操作（# / ** / 退格降级等）可 Ctrl+Z 还原成原文 ----------
 let undoStack = [];
 let redoStack = [];
 let preInputSnapshot = null;
@@ -1554,7 +1600,7 @@ function exitList(li) {
   scheduleSerialize();
 }
 
-// non-empty list item, caret at start: strip bullet and demote to paragraph (Typora style)
+// non-empty list item, caret at start: strip bullet and demote to paragraph (WYSIWYG style)
 function demoteListItem(li) {
   pushUndo();
   const list = li.parentNode;
@@ -1769,7 +1815,7 @@ function tryLineTrigger() {
 function handleBackspace() {
   const node = caretNode();
   if (!node) return false;
-  // 退格删除自动配对的空括号（Typora 式）：() [] {} "" '' `` 相邻时一次删掉
+  // 退格删除自动配对的空括号（WYSIWYG 式）：() [] {} "" '' `` 相邻时一次删掉
   const ch = charsAtCaret();
   if (ch.prev && ch.next && PAIR_MAP[ch.prev] === ch.next) {
     pushUndo();
@@ -1846,7 +1892,7 @@ function handleBackspace() {
     const offset = sel && sel.rangeCount ? sel.getRangeAt(0).startOffset : -1;
     const htext = normText(heading.textContent);
     if (htext === '') {
-      // 空标题退格：直接变回空段落（Typora 式），# 可继续删除，不留空壳 <br>
+      // 空标题退格：直接变回空段落（WYSIWYG 式），# 可继续删除，不留空壳 <br>
       const p = document.createElement('p');
       p.textContent = ZWSP;
       pushUndo();
@@ -1868,7 +1914,7 @@ function handleBackspace() {
   return false;
 }
 
-// ---------- 光标位置改动提交标记（Typora 式）：输入 # 后空格 / 方向键 / 点击都会触发 ----------
+// ---------- 光标位置改动提交标记（WYSIWYG 式）：输入 # 后空格 / 方向键 / 点击都会触发 ----------
 const CARET_KEYS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'];
 let lastMarkerBlock = null;
 
@@ -1950,9 +1996,10 @@ function tryCommitMarker() {
 }
 
 function onKeyUp(e) {
+  updateCaretStatus();
   if (composing || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
   if (CARET_KEYS.indexOf(e.key) === -1) return;
-  // 块级元素两段式（Typora）：只有光标离开标记行，才正式提交渲染；
+  // 块级元素两段式（WYSIWYG）：只有光标离开标记行，才正式提交渲染；
   // 方向键仍在行内移动时保持编辑预览
   if (lastMarkerBlock && lastMarkerBlock.isConnected) {
     const b = lastMarkerBlock;
@@ -2012,6 +2059,8 @@ function onInput() {
   const inPre = node ? closestTag(node, 'pre') : null;
   if (inPre) scheduleHighlight(inPre);
   pendingInputTimer = setTimeout(() => {
+    updateCaretStatus();
+    notifyOutline(400);
     if (tryEmptyMarker()) { scheduleSerialize(); return; }
     if (tryInlineFormat()) { scheduleSerialize(); return; }
     syncCodeGutters();
@@ -2019,7 +2068,7 @@ function onInput() {
   }, 0);
 }
 
-// Ctrl+1..6 / Ctrl+0: convert current block to heading / paragraph (Typora shortcut)
+// Ctrl+1..6 / Ctrl+0: convert current block to heading / paragraph (WYSIWYG shortcut)
 function setHeadingLevel(level) {
   const block = caretBlock();
   if (!block || block === getPane()) return;
@@ -2042,7 +2091,247 @@ function setHeadingLevel(level) {
   scheduleSerialize();
 }
 
-// ---------- ?????Typora ????????? Ctrl+Z ?????????? ----------
+// ---------- ?????WYSIWYG ????????? Ctrl+Z ?????????? ----------
+// ---------- WYSIWYG 风格快捷键辅助：标题升降 / 行内格式 / 块级转换 / 链接对话框 ----------
+let pendingLinkRange = null;
+let pendingLinkText = '';
+
+function adjustHeadingLevel(delta) {
+  const block = caretBlock();
+  if (!block || block === getPane() || block.nodeType !== Node.ELEMENT_NODE) return;
+  const m = /^h([1-6])$/.exec(block.tagName.toLowerCase());
+  const cur = m ? parseInt(m[1], 10) : 0;
+  const next = Math.max(0, Math.min(6, cur + delta));
+  if (next !== cur) setHeadingLevel(next);
+}
+
+function wrapInlineCode() {
+  if (caretInPre()) return;
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  const range = sel.getRangeAt(0);
+  const code = document.createElement('code');
+  const text = sel.toString();
+  if (text) {
+    code.textContent = text;
+    range.deleteContents();
+    range.insertNode(code);
+  } else {
+    code.textContent = '代码';
+    range.insertNode(code);
+  }
+  placeCaretAtEnd(code);
+  scheduleSerialize();
+}
+
+function toggleCodeBlock() {
+  const block = caretBlock();
+  const pane = getPane();
+  if (!block || block === pane || block.nodeType !== Node.ELEMENT_NODE) return;
+  const tag = block.tagName.toLowerCase();
+  if (tag === 'pre') {
+    pushUndo();
+    const p = document.createElement('p');
+    p.textContent = normText(block.textContent) || ZWSP;
+    block.replaceWith(p);
+    placeCaretAtEnd(p);
+    scheduleSerialize();
+    return;
+  }
+  if (tag !== 'p' && tag !== 'div' && !/^h[1-6]$/.test(tag)) return;
+  pushUndo();
+  const pre = document.createElement('pre');
+  const code = document.createElement('code');
+  code.textContent = normText(block.textContent) || ZWSP;
+  pre.appendChild(code);
+  ensureCodeToolbar(pre);
+  ensureCodeLangPicker(pre);
+  if (codeLinesEnabled) addCodeGutter(pre);
+  block.replaceWith(pre);
+  placeCaretAtEnd(code);
+  syncCodeGutters();
+  scheduleSerialize();
+}
+
+function toggleBlockType(type) {
+  const node = caretNode();
+  const pane = getPane();
+  if (!node) return;
+  const block = caretBlock();
+  if (!block || block === pane || block.nodeType !== Node.ELEMENT_NODE) return;
+  const tag = block.tagName.toLowerCase();
+
+  if (type === 'quote') {
+    const bq = closestTag(node, 'blockquote');
+    if (bq) {
+      pushUndo();
+      const p = document.createElement('p');
+      p.textContent = normText(bq.textContent) || ZWSP;
+      bq.replaceWith(p);
+      placeCaretAtEnd(p);
+      scheduleSerialize();
+      return;
+    }
+    if (tag === 'pre' || tag === 'table' || tag === 'ul' || tag === 'ol') return;
+    pushUndo();
+    const el = document.createElement('blockquote');
+    const p = document.createElement('p');
+    p.textContent = normText(block.textContent) || ZWSP;
+    el.appendChild(p);
+    block.replaceWith(el);
+    placeCaretAtEnd(p);
+    scheduleSerialize();
+    return;
+  }
+
+  const li = closestTag(node, 'li');
+  const list = li ? li.parentNode : null;
+  const listTag = list ? list.tagName.toLowerCase() : '';
+  const isTarget = (type === 'ul' && listTag === 'ul' && !(li && li.querySelector('input[type=checkbox]'))) ||
+                   (type === 'ol' && listTag === 'ol') ||
+                   (type === 'task' && listTag === 'ul' && !!(li && li.querySelector('input[type=checkbox]')));
+  if (li) {
+    const text = normText(li.textContent) || ZWSP;
+    if (isTarget) {
+      pushUndo();
+      const p = document.createElement('p');
+      p.textContent = text;
+      li.replaceWith(p);
+      if (list && !list.children.length) list.remove();
+      placeCaretAtEnd(p);
+      scheduleSerialize();
+      return;
+    }
+    pushUndo();
+    const listEl = document.createElement(type === 'ol' ? 'ol' : 'ul');
+    const nli = document.createElement('li');
+    if (type === 'task') {
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      nli.appendChild(cb);
+      nli.appendChild(document.createTextNode(text));
+    } else {
+      nli.textContent = text;
+    }
+    listEl.appendChild(nli);
+    li.replaceWith(listEl);
+    if (list && !list.children.length) list.remove();
+    keepListSeparated(listEl);
+    placeCaretAtEnd(nli);
+    scheduleSerialize();
+    return;
+  }
+  if (tag === 'pre' || tag === 'table') return;
+  pushUndo();
+  const listEl = document.createElement(type === 'ol' ? 'ol' : 'ul');
+  const nli = document.createElement('li');
+  if (type === 'task') {
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    nli.appendChild(cb);
+    nli.appendChild(document.createTextNode(normText(block.textContent) || ZWSP));
+  } else {
+    nli.textContent = normText(block.textContent) || ZWSP;
+  }
+  listEl.appendChild(nli);
+  block.replaceWith(listEl);
+  keepListSeparated(listEl);
+  placeCaretAtEnd(nli);
+  scheduleSerialize();
+}
+
+function selectCurrentLine() {
+  const node = caretNode();
+  if (!node) return;
+  const target = closestTag(node, 'li') || caretBlock();
+  if (!target || target === getPane()) return;
+  const sel = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(target);
+  sel.removeAllRanges();
+  sel.addRange(range);
+  getPane().focus();
+}
+
+function deleteCurrentBlock() {
+  const node = caretNode();
+  const pane = getPane();
+  if (!node) return;
+  const li = closestTag(node, 'li');
+  if (li && li.parentNode) {
+    pushUndo();
+    const list = li.parentNode;
+    const next = li.nextElementSibling || list.parentNode;
+    li.remove();
+    if (list && !list.children.length) list.remove();
+    placeCaretAtEnd(next && next.nodeType === Node.ELEMENT_NODE ? next : pane);
+    scheduleSerialize();
+    return;
+  }
+  const block = caretBlock();
+  if (!block || block === pane) return;
+  pushUndo();
+  const prev = block.previousElementSibling;
+  const next = block.nextElementSibling;
+  block.remove();
+  if (!pane.children.length) {
+    const p = document.createElement('p');
+    p.textContent = ZWSP;
+    pane.appendChild(p);
+    placeCaretAtEnd(p);
+  } else if (next) {
+    placeCaretAtEnd(next);
+  } else if (prev) {
+    placeCaretAtEnd(prev);
+  }
+  scheduleSerialize();
+}
+
+// 链接对话框（Ctrl+K，WYSIWYG 式）
+function openLinkDialog() {
+  const sel = window.getSelection();
+  pendingLinkRange = null;
+  pendingLinkText = '';
+  if (sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+    pendingLinkRange = sel.getRangeAt(0).cloneRange();
+    pendingLinkText = sel.toString();
+  }
+  const dialog = document.getElementById('linkDialog');
+  const input = document.getElementById('linkInput');
+  if (!dialog || !input) return;
+  input.value = '';
+  dialog.hidden = false;
+  input.focus();
+}
+
+function closeLinkDialog() {
+  const dialog = document.getElementById('linkDialog');
+  if (dialog) dialog.hidden = true;
+  pendingLinkRange = null;
+  pendingLinkText = '';
+}
+
+function confirmLink() {
+  const input = document.getElementById('linkInput');
+  const url = input ? input.value.trim() : '';
+  closeLinkDialog();
+  if (!url) return;
+  const pane = getPane();
+  pane.focus();
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  if (pendingLinkRange && pendingLinkRange.startContainer && pendingLinkRange.startContainer.isConnected) {
+    sel.addRange(pendingLinkRange);
+  }
+  const a = document.createElement('a');
+  a.href = url;
+  a.textContent = pendingLinkText || url;
+  document.execCommand('insertHTML', false, a.outerHTML);
+  scheduleSerialize();
+}
+
+function cancelLink() { closeLinkDialog(); }
+
 const CONVERSION_KEYS = /[#\-+*>0-9\[\]`"'~_!]/;
 function capturePreInput(e) {
   if (e.ctrlKey || e.metaKey || e.altKey || composing) { preInputSnapshot = null; return; }
@@ -2112,7 +2401,7 @@ function onKeyDown(e) {
       e.preventDefault();
       return;
     } else if (e.key === 'ArrowDown' && isCaretAtDocEnd()) {
-      // 文档末尾 ↓：光标移到尾部空白新建的空段落（Typora 尾部可编辑）
+      // 文档末尾 ↓：光标移到尾部空白新建的空段落（WYSIWYG 尾部可编辑）
       pushUndo();
       const b = caretBlock();
       if (isMarkerLine(b)) lastMarkerBlock = b;
@@ -2145,6 +2434,27 @@ function onKeyDown(e) {
     document.execCommand('italic');
     scheduleSerialize();
     return;
+  }
+  // ---------- WYSIWYG 风格快捷键 ----------
+  if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+    const k = e.key.toLowerCase();
+    if (!e.shiftKey && k === 'u') { e.preventDefault(); document.execCommand('underline'); scheduleSerialize(); return; }
+    if (e.shiftKey && k === 's') { e.preventDefault(); document.execCommand('strikeThrough'); scheduleSerialize(); return; }
+    if (e.shiftKey && (k === '`' || k === '~')) { e.preventDefault(); wrapInlineCode(); return; }
+    if (!e.shiftKey && k === 'k') { e.preventDefault(); openLinkDialog(); return; }
+    if (e.shiftKey && k === 'k') { e.preventDefault(); toggleCodeBlock(); return; }
+    if (e.shiftKey && k === 'q') { e.preventDefault(); toggleBlockType('quote'); return; }
+    if (e.shiftKey && k === 'u') { e.preventDefault(); toggleBlockType('ul'); return; }
+    if (e.shiftKey && k === 'o') { e.preventDefault(); toggleBlockType('ol'); return; }
+    if (e.shiftKey && k === 'x') { e.preventDefault(); toggleBlockType('task'); return; }
+    if (!e.shiftKey && k === '=') { e.preventDefault(); adjustHeadingLevel(1); return; }
+    if (!e.shiftKey && (k === '-' || k === '_')) { e.preventDefault(); adjustHeadingLevel(-1); return; }
+    if (!e.shiftKey && k === 'l') { e.preventDefault(); selectCurrentLine(); return; }
+    if (e.shiftKey && k === 'd') { e.preventDefault(); deleteCurrentBlock(); return; }
+    if (!e.shiftKey && k === 'd') { e.preventDefault(); deleteCurrentBlock(); return; }
+    if (!e.shiftKey && k === '/') { e.preventDefault(); toggleComment(); return; }
+    if (e.shiftKey && k === 'v') { e.preventDefault(); pasteAsMarkdown(); return; }
+    if (e.shiftKey && k === 'c') { e.preventDefault(); copyAsMarkdown(); return; }
   }
   if (handleAutoPair(e)) return;
   if (e.key === 'Enter' && node && closestTag(node, 'pre')) {
@@ -2187,7 +2497,142 @@ function onKeyDown(e) {
   }
 }
 
+
+// ---------- 图片选中与 8 向缩放手柄 ----------
+const IMG_HANDLE_DIRS = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+let selectedImage = null;
+let imageResizeState = null;
+let imageHandles = null;
+
+function getImageHandles() {
+  if (imageHandles && imageHandles[0] && imageHandles[0].isConnected) return imageHandles;
+  imageHandles = IMG_HANDLE_DIRS.map((dir) => {
+    const el = document.createElement('div');
+    el.className = 'img-resize-handle d-' + dir;
+    el.dataset.dir = dir;
+    el.title = '拖动调整图片大小';
+    getPane().appendChild(el);
+    return el;
+  });
+  return imageHandles;
+}
+
+function positionImageHandle(img) {
+  if (!img || !img.isConnected) return;
+  const handles = getImageHandles();
+  const pane = getPane();
+  const paneRect = pane.getBoundingClientRect();
+  const rect = img.getBoundingClientRect();
+  // 手柄是 pane 内容区的绝对定位子元素：把视口坐标换算成内容坐标，补上滚动偏移，否则滚动后整体错位
+  const L = rect.left - paneRect.left + pane.scrollLeft;
+  const T = rect.top - paneRect.top + pane.scrollTop;
+  const R = rect.right - paneRect.left + pane.scrollLeft;
+  const B = rect.bottom - paneRect.top + pane.scrollTop;
+  const C = (L + R) / 2;
+  const M = (T + B) / 2;
+  const pos = { nw: [L, T], n: [C, T], ne: [R, T], e: [R, M], se: [R, B], s: [C, B], sw: [L, B], w: [L, M] };
+  for (const h of handles) {
+    const p = pos[h.dataset.dir];
+    h.style.left = p[0] + 'px';
+    h.style.top = p[1] + 'px';
+    h.style.display = 'block';
+  }
+}
+
+function selectImage(img) {
+  deselectImage();
+  selectedImage = img;
+  img.classList.add('img-selected');
+  positionImageHandle(img);
+}
+
+function deselectImage() {
+  if (selectedImage) {
+    selectedImage.classList.remove('img-selected');
+    selectedImage = null;
+  }
+  if (imageHandles) {
+    for (const h of imageHandles) h.style.display = 'none';
+  }
+}
+
+// 拖动任一手柄 → 按对应方向缩放（保持宽高比）；点击图片本身仅选中
+function startImageResize(e) {
+  const target = e.target;
+  if (!target || !target.classList || !target.classList.contains('img-resize-handle')) return false;
+  e.preventDefault();
+  e.stopPropagation();
+  const img = selectedImage;
+  if (!img || !img.isConnected) return false;
+  pushUndo(); // 记录缩放前的快照，Ctrl+Z 可还原
+  const rect = img.getBoundingClientRect();
+  imageResizeState = {
+    img,
+    dir: target.dataset.dir || 'se',
+    startX: e.clientX,
+    startY: e.clientY,
+    startW: rect.width,
+    startH: rect.height
+  };
+  const pane = getPane();
+  const sizeTip = document.createElement('div');
+  sizeTip.className = 'img-size-tip';
+  pane.appendChild(sizeTip);
+  const onMove = (ev) => {
+    const st = imageResizeState;
+    if (!st) return;
+    const dx = ev.clientX - st.startX;
+    const dy = ev.clientY - st.startY;
+    const d = st.dir;
+    let scale = 1;
+    if (d === 'e' || d === 'ne' || d === 'se') scale = (st.startW + dx) / st.startW;
+    else if (d === 'w' || d === 'nw' || d === 'sw') scale = (st.startW - dx) / st.startW;
+    else if (d === 's') scale = (st.startH + dy) / st.startH;
+    else if (d === 'n') scale = (st.startH - dy) / st.startH;
+    if (d.includes('n') && (d === 'ne' || d === 'nw')) scale = Math.max(scale, (st.startH - dy) / st.startH);
+    if (d.includes('s') && (d === 'se' || d === 'sw')) scale = Math.max(scale, (st.startH + dy) / st.startH);
+    const w = Math.max(24, Math.round(st.startW * scale));
+    st.img.style.width = w + 'px';
+    st.img.style.height = 'auto';
+    st.img.removeAttribute('width');
+    st.img.removeAttribute('height');
+    st.width = w;
+    positionImageHandle(st.img);
+    sizeTip.textContent = w + 'px';
+    const paneRect = pane.getBoundingClientRect();
+    const imgRect = st.img.getBoundingClientRect();
+    sizeTip.style.left = Math.round(imgRect.right - paneRect.left + pane.scrollLeft - 64) + 'px';
+    sizeTip.style.top = Math.round(imgRect.top - paneRect.top + pane.scrollTop - 28) + 'px';
+  };
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    if (sizeTip.parentNode) sizeTip.parentNode.removeChild(sizeTip);
+    const st = imageResizeState;
+    imageResizeState = null;
+    if (st && st.width && Math.abs(st.width - st.startW) >= 2) {
+      st.img.removeAttribute('style');
+      st.img.setAttribute('width', String(st.width));
+      scheduleSerialize();
+    }
+    positionImageHandle(st ? st.img : selectedImage);
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+  return true;
+}
+
+// 点击图片 → 仅选中（不做缩放）
+function selectImageOnMousedown(e) {
+  const imgEl = e.target && e.target.closest ? e.target.closest('img') : null;
+  if (!imgEl) return false;
+  e.preventDefault();
+  e.stopPropagation();
+  selectImage(imgEl);
+  return true;
+}
 function onClick(e) {
+  if (!(e.target && e.target.closest && e.target.closest('img'))) deselectImage();
   const cb = e.target && e.target.closest ? e.target.closest('input[type=checkbox]') : null;
   if (cb) {
     e.preventDefault();
@@ -2223,10 +2668,324 @@ async function onPaste(e) {
     document.execCommand('insertHTML', false, '<img src="' + src.replace(/"/g, '&quot;') + '" alt="图片" />');
     return; // input 事件会继续处理
   }
-  const text = e.clipboardData && e.clipboardData.getData('text/plain');
-  if (text) {
+  // Ctrl+Shift+V：粘贴为 Markdown（富文本来源转回 Markdown 源码后渲染插入）
+  if (e.shiftKey && (e.ctrlKey || e.metaKey)) {
     e.preventDefault();
+    const clipHtml = e.clipboardData && e.clipboardData.getData('text/html');
+    const clipText = e.clipboardData && e.clipboardData.getData('text/plain');
+    const md2 = clipHtml ? td.turndown(clipHtml) : (clipText || '');
+    if (md2) document.execCommand('insertHTML', false, preview.render(md2, { includeTitle: false }).html);
+    return;
+  }
+  const html = e.clipboardData && e.clipboardData.getData('text/html');
+  const text = e.clipboardData && e.clipboardData.getData('text/plain');
+  e.preventDefault();
+  if (html) {
+    // 带格式粘贴：清洗危险标签后按富文本插入，保存时仍会转回干净 Markdown
+    document.execCommand('insertHTML', false, sanitizePastedHtml(html));
+  } else if (text) {
     document.execCommand('insertText', false, text);
+  }
+}
+
+// 清洗剪贴板 HTML：去掉脚本 / 表单等危险与无关标签及 on* 事件属性（任务复选框保留）
+function sanitizePastedHtml(html) {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = html;
+  tpl.content.querySelectorAll('script, style, iframe, object, embed, link, meta, form, button, select, textarea, noscript').forEach((n) => n.remove());
+  tpl.content.querySelectorAll('input').forEach((n) => { if (n.type !== 'checkbox') n.remove(); });
+  for (const el of tpl.content.querySelectorAll('*')) {
+    for (const attr of Array.from(el.attributes)) {
+      if (/^on/i.test(attr.name)) el.removeAttribute(attr.name);
+    }
+  }
+  return tpl.innerHTML;
+}
+
+// Ctrl+Shift+C：把选区复制为 Markdown 源码（同时写入富文本 HTML，粘到其它程序仍带格式）
+function copyAsMarkdown() {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+    showToastInEditor('请先选中要复制的内容');
+    return;
+  }
+  const container = document.createElement('div');
+  for (let i = 0; i < sel.rangeCount; i++) container.appendChild(sel.getRangeAt(i).cloneContents());
+  let md = td.turndown(container.innerHTML).trim();
+  md = md.replace(/\u200b/g, '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
+  const html = container.innerHTML;
+  const done = () => showToastInEditor("✓ 已复制为 Markdown");
+  // 优先走主进程 IPC 写剪贴板：渲染进程 navigator.clipboard 在无用户手势时会被拒
+  if (window.api && window.api.writeClipboard) {
+    window.api.writeClipboard(md, html).then((ok) => {
+      if (ok) done();
+      else { try { navigator.clipboard.writeText(md).then(done).catch(() => fallbackCopy(md, done)); } catch (err) { fallbackCopy(md, done); } }
+    }).catch(() => {
+      try { navigator.clipboard.writeText(md).then(done).catch(() => fallbackCopy(md, done)); } catch (err) { fallbackCopy(md, done); }
+    });
+    return;
+  }
+  if (navigator.clipboard && navigator.clipboard.write && typeof ClipboardItem !== "undefined") {
+    try {
+      navigator.clipboard.write([new ClipboardItem({
+        'text/plain': new Blob([md], { type: 'text/plain' }),
+        'text/html': new Blob([html], { type: 'text/html' })
+      })]).then(done).catch(() => fallbackCopy(md, done));
+      return;
+    } catch (err) { /* 回退到 writeText */ }
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(md).then(done).catch(() => fallbackCopy(md, done));
+    return;
+  }
+  fallbackCopy(md, done);
+}
+
+
+// Ctrl+Shift+V：粘贴为 Markdown。富文本来源先经 turndown 转回 Markdown 源码，再渲染插入
+async function pasteAsMarkdown() {
+  let text = '';
+  let html = '';
+  try {
+    if (window.api && window.api.readClipboard) {
+      const clip = await window.api.readClipboard();
+      text = (clip && clip.text) || '';
+      html = (clip && clip.html) || '';
+    } else if (navigator.clipboard && navigator.clipboard.readText) {
+      text = await navigator.clipboard.readText();
+    }
+  } catch (err) {}
+  let md = html ? td.turndown(html) : text;
+  md = (md || '').replace(/\u200b/g, '').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim();
+  if (!md) { showToastInEditor('剪贴板里没有可粘贴的内容'); return; }
+  document.execCommand('insertHTML', false, preview.render(md, { includeTitle: false }).html);
+  showToastInEditor('✓ 已粘贴为 Markdown');
+}
+function fallbackCopy(text, done) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); } catch (err) {}
+  ta.remove();
+  if (done) done();
+}
+
+let editorToastTimer = null;
+function showToastInEditor(text) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.add('show');
+  clearTimeout(editorToastTimer);
+  editorToastTimer = setTimeout(() => el.classList.remove('show'), 2000);
+}
+
+// ---------- 行列状态 / 大纲 ----------
+function updateCaretStatus() {
+  const el = document.getElementById('statCursor');
+  if (!el) return;
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  const pane = getPane();
+  const range = sel.getRangeAt(0);
+  try {
+    const pre = document.createRange();
+    pre.selectNodeContents(pane);
+    pre.setEnd(range.startContainer, range.startOffset);
+    const text = pre.toString();
+    const lines = text.split('\n');
+    el.textContent = '第 ' + lines.length + ' 行，第 ' + (lines[lines.length - 1].length + 1) + ' 列';
+  } catch (err) {}
+}
+
+function collectOutline() {
+  const pane = getPane();
+  const items = [];
+  for (const h of pane.querySelectorAll('h1,h2,h3,h4,h5,h6')) {
+    const level = parseInt(h.tagName[1], 10);
+    const text = (h.textContent || '').replace(/\u200b/g, '').trim();
+    if (text) items.push({ level, text, el: h });
+  }
+  return items;
+}
+
+function notifyOutline(delay) {
+  if (!onOutlineCb) return;
+  clearTimeout(outlineTimer);
+  outlineTimer = setTimeout(() => onOutlineCb(collectOutline()), delay == null ? 300 : delay);
+}
+
+// ---------- Ctrl+/：HTML 注释 / 取消注释 ----------
+function toggleComment() {
+  const block = caretBlock();
+  if (!block || block === getPane()) return;
+  pushUndo();
+  const text = (block.textContent || '').replace(/\u200b/g, '');
+  const trimmed = text.trim();
+  const m = /^<!--([\s\S]*)-->$/.exec(trimmed);
+  if (m) {
+    block.textContent = m[1].trim() || ZWSP;
+  } else {
+    block.textContent = '<!-- ' + trimmed + ' -->';
+  }
+  placeCaretAtEnd(block);
+  scheduleSerialize();
+}
+
+// ---------- 拖拽插入图片 / 文件 ----------
+function readFileAsDataUrl(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function onPaneDrop(e) {
+  dragDepth = 0;
+  getPane().classList.remove('dragover');
+  const files = e.dataTransfer && e.dataTransfer.files;
+  if (!files || !files.length) return;
+  e.preventDefault();
+  const notePath = onGetNotePathCb ? onGetNotePathCb() : null;
+  let inserted = false;
+  for (const file of files) {
+    if (/^image\//i.test(file.type || '')) {
+      const dataUrl = await readFileAsDataUrl(file);
+      if (!dataUrl) continue;
+      let src = dataUrl;
+      try {
+        if (notePath && window.api && window.api.saveImage) {
+          const rel = await window.api.saveImage(dataUrl, notePath);
+          if (rel) src = rel;
+        }
+      } catch (err) {}
+      const alt = (file.name || '图片').replace(/\.[^.]+$/, '').replace(/"/g, '&quot;');
+      document.execCommand('insertHTML', false, '<img src="' + src.replace(/"/g, '&quot;') + '" alt="' + alt + '" />');
+      inserted = true;
+    } else {
+      let filePath = '';
+      try { if (window.api && window.api.getPathForFile) filePath = window.api.getPathForFile(file); } catch (err) {}
+      if (filePath) {
+        const md = '[' + (file.name || '文件').replace(/"/g, '&quot;') + '](' + filePath.replace(/\\/g, '/') + ')';
+        document.execCommand('insertHTML', false, preview.render(md, { includeTitle: false }).html);
+        inserted = true;
+      } else if (file.name) {
+        document.execCommand('insertText', false, file.name);
+        inserted = true;
+      }
+    }
+  }
+  if (inserted) scheduleSerialize();
+}
+
+// ---------- 表格右键菜单 ----------
+function hideTableMenu() {
+  const m = document.querySelector('.table-menu');
+  if (m) m.remove();
+}
+
+function showTableMenu(e, cell) {
+  e.preventDefault();
+  hideTableMenu();
+  const table = closestTag(cell, 'table');
+  if (!table) return;
+  const rows = Array.from(table.querySelectorAll('tr'));
+  const row = closestTag(cell, 'tr');
+  const rowIndex = rows.indexOf(row);
+  const cells = row ? Array.from(row.children) : [];
+  const cellIndex = cells.indexOf(cell);
+  const menu = document.createElement('div');
+  menu.className = 'table-menu';
+  const addItem = (label, fn) => {
+    const it = document.createElement('div');
+    it.className = 'tm-item';
+    it.textContent = label;
+    it.onclick = () => { hideTableMenu(); pushUndo(); fn(); scheduleSerialize(); };
+    menu.appendChild(it);
+  };
+  addItem('上方插入行', () => insertTableRow(table, rowIndex, true));
+  addItem('下方插入行', () => insertTableRow(table, rowIndex, false));
+  const sep1 = document.createElement('div');
+  sep1.className = 'tm-sep';
+  menu.appendChild(sep1);
+  addItem('左侧插入列', () => insertTableCol(table, cellIndex, true));
+  addItem('右侧插入列', () => insertTableCol(table, cellIndex, false));
+  const sep2 = document.createElement('div');
+  sep2.className = 'tm-sep';
+  menu.appendChild(sep2);
+  addItem('删除本行', () => deleteTableRow(table, rowIndex));
+  addItem('删除本列', () => deleteTableCol(table, cellIndex));
+  const sep3 = document.createElement('div');
+  sep3.className = 'tm-sep';
+  menu.appendChild(sep3);
+  addItem('删除整个表格', () => { if (table.parentNode) table.remove(); });
+  document.body.appendChild(menu);
+  const mw = menu.offsetWidth;
+  const mh = menu.offsetHeight;
+  menu.style.left = Math.min(e.clientX, window.innerWidth - mw - 8) + 'px';
+  menu.style.top = Math.min(e.clientY, window.innerHeight - mh - 8) + 'px';
+  setTimeout(() => {
+    document.addEventListener('mousedown', function dismiss(ev) {
+      if (!menu.contains(ev.target)) { hideTableMenu(); document.removeEventListener('mousedown', dismiss); }
+    });
+  }, 0);
+}
+
+function insertTableRow(table, rowIndex, before) {
+  const rows = Array.from(table.querySelectorAll('tr'));
+  const src = rows[Math.max(0, rowIndex)];
+  if (!src) return;
+  const tr = document.createElement('tr');
+  for (const c of src.children) {
+    const cell = document.createElement(c.tagName === 'TH' ? 'th' : 'td');
+    cell.textContent = ZWSP;
+    tr.appendChild(cell);
+  }
+  if (before && rows[rowIndex]) rows[rowIndex].before(tr);
+  else if (rows[rowIndex + 1]) rows[rowIndex + 1].before(tr);
+  else src.parentNode.appendChild(tr);
+  placeCaretAtEnd(tr.firstChild);
+}
+
+function insertTableCol(table, colIndex, before) {
+  const rows = Array.from(table.querySelectorAll('tr'));
+  for (const tr of rows) {
+    const cells = Array.from(tr.children);
+    const src = cells[Math.max(0, Math.min(colIndex, cells.length - 1))];
+    if (!src) continue;
+    const tag = tr.parentNode && tr.parentNode.tagName === 'THEAD' ? 'th' : 'td';
+    const cell = document.createElement(tag);
+    cell.textContent = ZWSP;
+    if (before && cells[colIndex]) cells[colIndex].before(cell);
+    else if (cells[colIndex + 1]) cells[colIndex + 1].before(cell);
+    else tr.appendChild(cell);
+  }
+}
+
+function deleteTableRow(table, rowIndex) {
+  const rows = Array.from(table.querySelectorAll('tr'));
+  const tr = rows[rowIndex];
+  if (!tr) return;
+  const next = tr.nextElementSibling || tr.previousElementSibling;
+  tr.remove();
+  const thead = table.querySelector('thead');
+  const tbody = table.querySelector('tbody');
+  if (thead && !thead.querySelector('tr')) thead.remove();
+  if (tbody && !tbody.querySelector('tr')) tbody.remove();
+  if (!table.querySelector('tr')) { table.remove(); return; }
+  if (next) placeCaretAtEnd(next);
+}
+
+function deleteTableCol(table, colIndex) {
+  const rows = Array.from(table.querySelectorAll('tr'));
+  for (const tr of rows) {
+    const cell = tr.children[colIndex];
+    if (cell) cell.remove();
   }
 }
 
@@ -2258,6 +3017,7 @@ function init(handlers) {
   onChangeCb = handlers.onChange;
   onSaveCb = handlers.onSave;
   onGetNotePathCb = handlers.onGetNotePath || null;
+  onOutlineCb = handlers.onOutline || null;
   const pane = getPane();
   pane.addEventListener('input', onInput);
   pane.addEventListener('keydown', onKeyDown);
@@ -2271,12 +3031,17 @@ function init(handlers) {
     scheduleSerialize(100);
   });
   pane.addEventListener('blur', () => {
+    deselectImage();
     tryCommitMarker();
     flush();
   });
+  pane.addEventListener('scroll', () => { if (selectedImage) positionImageHandle(selectedImage); });
+  window.addEventListener('resize', () => { if (selectedImage) positionImageHandle(selectedImage); });
   pane.addEventListener('click', onClick);
   pane.addEventListener('mousedown', (e) => {
     if (e.button === 0) {
+      if (startImageResize(e)) return;
+      if (selectImageOnMousedown(e)) return;
       const paneEl = getPane();
       const kids = paneEl.children;
       const lastChild = kids.length ? kids[kids.length - 1] : paneEl.lastChild;
@@ -2286,7 +3051,7 @@ function init(handlers) {
         const r = rng.getBoundingClientRect();
         const cs = getComputedStyle(kids.length ? lastChild : paneEl);
         const margin = parseFloat(cs.marginBottom) || 0;
-        // 点击内容下方空白：直接把光标放置到文档末尾（Typora 尾部可编辑，回车不是唯一新建方式）
+        // 点击内容下方空白：直接把光标放置到文档末尾（WYSIWYG 尾部可编辑，回车不是唯一新建方式）
         if (e.clientY > r.bottom + margin) {
           e.preventDefault();
           const from = caretBlock();
@@ -2308,10 +3073,57 @@ function init(handlers) {
     lastMarkerBlock = isMarkerLine(b) ? b : null;
   });
   pane.addEventListener('paste', onPaste);
+  // 拖拽插入图片 / 文件（从系统文件夹直接拖入编辑区）
+  pane.addEventListener('dragenter', (e) => {
+    if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+      e.preventDefault();
+      dragDepth++;
+      pane.classList.add('dragover');
+    }
+  });
+  pane.addEventListener('dragover', (e) => {
+    if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    }
+  });
+  pane.addEventListener('dragleave', (e) => {
+    if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files')) {
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (!dragDepth) pane.classList.remove('dragover');
+    }
+  });
+  pane.addEventListener('drop', onPaneDrop);
+  pane.addEventListener('contextmenu', (e) => {
+    const cell = e.target && e.target.closest ? e.target.closest('td,th') : null;
+    if (cell) { showTableMenu(e, cell); return; }
+    hideTableMenu();
+  });
+  document.addEventListener('selectionchange', () => updateCaretStatus());
   document.addEventListener('click', onDocClickForLangMenu, true);
+
+  // 链接对话框（Ctrl+K）事件绑定
+  const linkDialog = document.getElementById('linkDialog');
+  const linkInput = document.getElementById('linkInput');
+  const linkOk = document.getElementById('linkOkBtn');
+  const linkCancel = document.getElementById('linkCancelBtn');
+  if (linkOk) linkOk.addEventListener('click', confirmLink);
+  if (linkCancel) linkCancel.addEventListener('click', cancelLink);
+  if (linkInput) {
+    linkInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); confirmLink(); }
+      if (e.key === 'Escape') { e.preventDefault(); cancelLink(); }
+    });
+  }
+  if (linkDialog) {
+    linkDialog.addEventListener('mousedown', (e) => {
+      if (e.target === linkDialog) cancelLink();
+    });
+  }
 }
 
 function load(content) {
+  deselectImage();
   // 打开即清洗：旧版本残留的 \u0001 / 其它控制符 / BOM / 孤立代理对不再显示到编辑区
   content = cleanMarkdown(content);
   doc.setDoc(content);
@@ -2331,6 +3143,7 @@ function load(content) {
   syncCodeGutters();
   pane.scrollTop = 0;
   placeCaretAtEnd(pane);
+  notifyOutline(100);
 }
 
-module.exports = { init, load, flush, cleanMarkdown, setCodeLines };
+module.exports = { init, load, flush, cleanMarkdown, setCodeLines, pasteAsMarkdown, copyAsMarkdown, toggleComment, deleteCurrentBlock };

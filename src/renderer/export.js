@@ -57,4 +57,13 @@ async function exportPdf() {
   if (p) console.log('PDF 已导出:', p);
 }
 
-module.exports = { exportHtml, exportPdf };
+async function exportPng() {
+  const p = await window.api.exportPng({ html: buildStandaloneHtml(), defaultName: currentName('png') });
+  if (p) console.log('PNG 已导出:', p);
+}
+
+async function printDoc() {
+  await window.api.printDoc({ html: buildStandaloneHtml() });
+}
+
+module.exports = { exportHtml, exportPdf, exportPng, printDoc };

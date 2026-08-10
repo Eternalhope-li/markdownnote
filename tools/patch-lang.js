@@ -1,5 +1,5 @@
 ﻿const fs = require('fs');
-const P = 'E:\\MarkdownNote\\src\\renderer\\typora.js';
+const P = 'E:\\MarkdownNote\\src\\renderer\\editor.js';
 let src = fs.readFileSync(P, 'utf-8');
 let n = 0;
 const rep = (oldL, newL, label) => {
@@ -41,7 +41,7 @@ rep(
 "  if (btn) btn.classList.toggle('active', !!pre.querySelector(':scope > .code-gutter'));",
 "}",
 "",
-"// ---------- 代码语言：右下角选择器 + 编辑实时高亮（Typora 式） ----------",
+"// ---------- 代码语言：右下角选择器 + 编辑实时高亮（WYSIWYG 式） ----------",
 "const CODE_LANGS = [",
 "  ['js', 'JavaScript'], ['ts', 'TypeScript'], ['py', 'Python'], ['java', 'Java'],",
 "  ['c', 'C'], ['cpp', 'C++'], ['cs', 'C#'], ['go', 'Go'], ['rs', 'Rust'],",
@@ -299,4 +299,4 @@ rep(
 );
 
 fs.writeFileSync(P, src, 'utf-8');
-console.log('typora.js patched (' + n + ' hunks)');
+console.log('editor.js patched (' + n + ' hunks)');
